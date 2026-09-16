@@ -15,12 +15,13 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple, Any
+from typing import Dict, Iterable, List, Optional, Tuple, Any, Literal, Sequence
 from urllib.parse import quote
 
 import requests
 
-from ._stream import extract, write_file
+from ._stream import destination, extract, relative_path, write_file
+from ._sync import SyncEntry, selected
 
 
 class StorageServices:
@@ -463,81 +464,150 @@ class StorageServices:
                 h.update(chunk)
         return h.hexdigest()
 
+    def _remote_metadata(self, prefix: str, ignore_sha: bool) -> Dict[str, Any]:
+        info = self.path_info(prefix or "/")
+        if not info["exists"]:
+            return {}
+        if info["entry"]["type"] != 1:
+            raise NotADirectoryError(prefix)
+        listing = self.ls(path=prefix or "/", recursive=True)
+        listing.raise_for_status()
+        paths = listing.json()
+        if not paths:
+            return {}
+        metadata = self.metadata(paths, ignore_sha=ignore_sha)
+        if not isinstance(metadata, list):
+            raise ValueError("Expected a list of remote file metadata")
+        result = {}
+        for item in metadata:
+            path = relative_path(item.get("Path", item.get("path", "")))
+            if prefix:
+                if not path.startswith(prefix + "/"):
+                    raise ValueError("Remote file is outside the requested directory")
+                path = path[len(prefix) + 1 :]
+            if path in result:
+                raise ValueError("Duplicate remote file metadata")
+            result[path] = item
+        return result
+
+    def plan_sync(
+        self,
+        local_dir: os.PathLike[str] | str,
+        remote_prefix: str = "",
+        direction: Literal["upload", "download"] = "upload",
+        ignore_sha: bool = False,
+        include: Sequence[str] | None = None,
+        exclude: Sequence[str] = (),
+    ) -> List[SyncEntry]:
+        """Plan a one-way sync without modifying files.
+
+        Patterns are case-sensitive shell wildcards against relative paths with
+        forward slashes. Exclusions win; an empty include list selects nothing.
+        No files are deleted. ignore_sha=True plans every selected file for
+        transfer, including files already present at the destination.
+        """
+        if direction not in ("upload", "download"):
+            raise ValueError("direction must be upload or download")
+        root = Path(local_dir)
+        if (direction == "upload" or root.exists()) and not root.is_dir():
+            raise NotADirectoryError(root)
+        prefix = remote_prefix.replace("\\", "/").strip("/")
+        if prefix:
+            prefix = relative_path(prefix)
+        local_paths = sorted(
+            (Path(folder) / name).relative_to(root).as_posix()
+            for folder, _, files in os.walk(root)
+            for name in files
+        )
+        candidates = [p for p in local_paths if selected(p, include, exclude)]
+        if direction == "upload" and not candidates:
+            return []
+        remote = self._remote_metadata(prefix, ignore_sha)
+        if direction == "download":
+            candidates = sorted(p for p in remote if selected(p, include, exclude))
+        plan = []
+        for path in candidates:
+            local = destination(root, path)
+            item = remote.get(path)
+            reason = "missing"
+            action: Literal["upload", "download", "skip"] = direction
+            if item is not None and local.is_file():
+                sha = item.get("Sha2", item.get("sha2"))
+                if ignore_sha:
+                    reason = "hash comparison disabled"
+                elif not sha:
+                    reason = "remote hash unavailable"
+                elif self.compute_sha256(local).lower() == sha.lower():
+                    action, reason = "skip", "matching hash"
+                else:
+                    reason = "different hash"
+            plan.append(SyncEntry(path, action, reason))
+        return plan
+
     def sync_local_to_remote(
         self,
-        local_dir: os.PathLike[str],
+        local_dir: os.PathLike[str] | str,
         remote_prefix: str = "",
         ignore_sha: bool = False,
         dry_run: bool = False,
+        include: Sequence[str] | None = None,
+        exclude: Sequence[str] = (),
     ) -> Dict[str, str]:
-        """Sync files from `local_dir` to remote storage under `remote_prefix`.
+        """Upload missing/changed selected files, without deleting remote files.
 
-        Behaviour:
-        - Walk `local_dir`, collect relative file paths.
-        - Query `metadata` for those paths (prefixed by `remote_prefix`).
-        - Upload files that are missing or whose SHA differs (unless `ignore_sha=True`).
-
-        Returns a dict mapping relative path -> action performed ("uploaded", "skipped").
+        Returns relative path -> uploaded/skipped (or uploaded (dry-run)).
+        Use plan_sync() for structured actions and comparison reasons.
         """
-        rem_prefix = remote_prefix.strip("/")
-
-        rel_paths: List[str] = []
-        for root, _dirs, files in os.walk(local_dir):
-            for f in files:
-                full = os.path.join(root, f)
-                rel = os.path.relpath(full, local_dir).replace("\\", "/")
-                if rem_prefix:
-                    rel_paths.append(f"{rem_prefix}/{rel}")
-                else:
-                    rel_paths.append(rel)
-
-        result: Dict[str, str] = {}
-        if not rel_paths:
-            return result
-
-        # request metadata in one batch (server should accept arrays)
-        remote_meta = self.metadata(rel_paths, ignore_sha=ignore_sha)
-        if remote_meta is None:
-            remote_meta = {}
-
-        # Build a mapping path -> metadata (prefer Path/path), fallback to name
-        remote_map = {}
-
-        def _norm(s: str) -> str:
-            return s.replace("\\", "/")
-
-        if isinstance(remote_meta, list):
-            for item in remote_meta:
-                p = item.get("Path", item.get("path"))
-                if isinstance(p, str):
-                    remote_map[_norm(p)] = item
-
-        # For each local file decide upload or skip
-        for rel in rel_paths:
-            # derive local file path
-            if rem_prefix:
-                # strip prefix when mapping back to local relative path
-                local_rel = rel[len(rem_prefix) + 1 :]
+        plan = self.plan_sync(
+            local_dir, remote_prefix, "upload", ignore_sha, include, exclude
+        )
+        prefix = remote_prefix.replace("\\", "/").strip("/")
+        result = {}
+        for entry in plan:
+            if entry.action == "skip":
+                result[entry.path] = "skipped"
             else:
-                local_rel = rel
-            local_path = os.path.join(local_dir, local_rel.replace("/", os.sep))
-
-            action = "uploaded"
-            # if remote metadata contains sha, use it
-            remote_item = remote_map.get(_norm(rel))
-            if remote_item and not ignore_sha:
-                # prefer Sha2 (server uses SHA-256)
-                remote_sha = remote_item.get("Sha2") or remote_item.get("sha2")
-                if remote_sha:
-                    local_sha = self.compute_sha256(local_path)
-                    if local_sha.lower() == remote_sha.lower():
-                        action = "skipped"
-
-            if action == "uploaded":
                 if not dry_run:
-                    self.upload_file(rel, local_path).raise_for_status()
-                result[local_rel] = "uploaded (dry-run)" if dry_run else "uploaded"
-            else:
-                result[local_rel] = "skipped"
+                    remote = f"{prefix}/{entry.path}" if prefix else entry.path
+                    self.upload_file(
+                        remote, str(Path(local_dir) / entry.path)
+                    ).raise_for_status()
+                result[entry.path] = "uploaded (dry-run)" if dry_run else "uploaded"
+        return result
 
+    def sync_remote_to_local(
+        self,
+        local_dir: os.PathLike[str] | str,
+        remote_prefix: str = "",
+        ignore_sha: bool = False,
+        dry_run: bool = False,
+        include: Sequence[str] | None = None,
+        exclude: Sequence[str] = (),
+        verify_sha: bool = False,
+        overwrite: bool = True,
+    ) -> Dict[str, str]:
+        """Download missing/changed selected files, without deleting local files.
+
+        Dry runs do not create the destination directory. Changed existing files
+        are replaced unless overwrite=False. verify_sha checks transferred data
+        independently of the ignore_sha option for planning comparisons.
+        """
+        plan = self.plan_sync(
+            local_dir, remote_prefix, "download", ignore_sha, include, exclude
+        )
+        prefix = remote_prefix.replace("\\", "/").strip("/")
+        result = {}
+        for entry in plan:
+            if entry.action == "skip":
+                result[entry.path] = "skipped"
+            else:
+                if not dry_run:
+                    remote = f"{prefix}/{entry.path}" if prefix else entry.path
+                    self.download(
+                        remote,
+                        destination(Path(local_dir), entry.path),
+                        verify_sha=verify_sha,
+                        overwrite=overwrite,
+                    )
+                result[entry.path] = "downloaded (dry-run)" if dry_run else "downloaded"
         return result

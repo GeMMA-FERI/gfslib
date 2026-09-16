@@ -151,3 +151,30 @@ result = svc.sync_local_to_remote(
 )
 print(result)
 ```
+
+## Plan and filter syncs
+
+```python
+plan = svc.plan_sync("./data", remote_prefix="uploads",
+                     include=["*.csv", "*.tif"], exclude=["scratch/*"])
+for entry in plan:
+    print(entry.path, entry.action, entry.reason)
+
+svc.sync_local_to_remote("./data", "uploads", include=["*.csv"])
+svc.sync_remote_to_local("./copy", "uploads", dry_run=True)
+svc.sync_remote_to_local("./copy", "uploads", verify_sha=True)
+```
+
+`plan_sync()` returns `SyncEntry` objects without modifying local or remote files.
+Set `direction="download"` to plan remote-to-local transfers. Paths are relative
+to the selected directory. Patterns use case-sensitive shell matching on paths
+with forward slashes; `*` can match slashes. Exclusions take precedence and an
+empty `include=[]` selects nothing. These are not gitignore patterns.
+
+Both sync methods return relative paths mapped to `uploaded`, `downloaded`, or
+`skipped`; planned transfers use `uploaded (dry-run)` or `downloaded (dry-run)`.
+Dry runs do not create destination directories. Neither direction deletes files.
+`ignore_sha=True` transfers all selected files instead of comparing hashes.
+Remote-to-local sync defaults to replacing changed files; `overwrite=False`
+protects existing files. `verify_sha=True` checks downloaded content separately
+from the comparison used to plan transfers.

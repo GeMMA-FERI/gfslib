@@ -133,7 +133,9 @@ def test_sync_comparison(
     elif kind == "lowercase":
         item = {"path": remote, "sha2": digest}
     svc = StorageServices("https://example.test")
-    monkeypatch.setattr(svc, "metadata", lambda *a, **kw: [item])
+    monkeypatch.setattr(
+        svc, "_remote_metadata", lambda *a: {} if kind == "bad_path" else {"file": item}
+    )
     uploads: list[str] = []
 
     def upload(remote_path: str, local_path: str) -> requests.Response:
@@ -152,7 +154,7 @@ def test_sync_comparison(
 def test_sync_upload_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "file").write_text("data")
     svc = StorageServices("https://example.test")
-    monkeypatch.setattr(svc, "metadata", lambda *a, **kw: [])
+    monkeypatch.setattr(svc, "_remote_metadata", lambda *a: {})
     monkeypatch.setattr(svc, "upload_file", lambda *a, **kw: response(status=500))
     with pytest.raises(requests.HTTPError):
         svc.sync_local_to_remote(tmp_path)

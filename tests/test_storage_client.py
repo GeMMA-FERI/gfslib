@@ -305,6 +305,7 @@ def test_sync_local_to_remote_handles_empty_dir_and_dry_run_without_prefix(
     local = tmp_path / "plain.txt"
     local.write_text("plain")
     monkeypatch.setattr(svc, "metadata", lambda *args, **kwargs: [])
+    monkeypatch.setattr(svc, "_remote_metadata", lambda *args: {})
 
     assert svc.sync_local_to_remote(tmp_path, dry_run=True) == {
         "plain.txt": "uploaded (dry-run)"
@@ -318,7 +319,7 @@ def test_sync_local_to_remote_handles_missing_metadata_response(
     local.write_text("plain")
 
     svc = StorageServices("https://example.test/storage")
-    monkeypatch.setattr(svc, "metadata", lambda *args, **kwargs: None)
+    monkeypatch.setattr(svc, "_remote_metadata", lambda *args: {})
     uploads: list[tuple[str, str]] = []
 
     def upload(remote: str, path: str) -> DummyResponse:

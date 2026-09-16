@@ -63,3 +63,32 @@ def test_directory_download_workflow(
     assert (tmp_path / "copy/empty.txt").read_bytes() == b""
     with pytest.raises(FileExistsError):
         svc.download_directory(root, tmp_path / "copy")
+
+
+def test_sync_workflow(
+    remote_folder: tuple[StorageServices, str], tmp_path: Path
+) -> None:
+    svc, root = remote_folder
+    local = tmp_path / "local"
+    local.mkdir()
+    (local / "file.txt").write_text("first")
+    (local / "ignored.bin").write_bytes(b"ignored")
+    prefix = f"{root}/new"
+    assert svc.sync_local_to_remote(local, prefix, include=["*.txt"]) == {
+        "file.txt": "uploaded"
+    }
+    assert svc.sync_local_to_remote(local, prefix, include=["*.txt"]) == {
+        "file.txt": "skipped"
+    }
+    copy = tmp_path / "copy"
+    assert svc.sync_remote_to_local(copy, prefix, verify_sha=True) == {
+        "file.txt": "downloaded"
+    }
+    assert (copy / "file.txt").read_text() == "first"
+    assert svc.sync_remote_to_local(copy, prefix) == {"file.txt": "skipped"}
+    (local / "file.txt").write_text("changed")
+    assert svc.sync_local_to_remote(local, prefix, include=["*.txt"]) == {
+        "file.txt": "uploaded"
+    }
+    svc.sync_remote_to_local(copy, prefix, verify_sha=True)
+    assert (copy / "file.txt").read_text() == "changed"
