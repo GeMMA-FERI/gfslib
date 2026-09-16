@@ -6,8 +6,45 @@ import hashlib
 import json
 import os
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, BinaryIO, Iterable
+from typing import Any, BinaryIO, Iterable, Generator, Sequence
+
+
+def encode_files(
+    files: Sequence[tuple[str, Path]], chunk_size: int
+) -> Generator[bytes, None, None]:
+    """Produce GF metadata/payload records without buffering whole files."""
+    for remote, local in files:
+        with local.open("rb") as source:
+            before = os.fstat(source.fileno())
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: source.read(chunk_size), b""):
+                digest.update(chunk)
+            source.seek(0)
+            metadata = {
+                "Name": remote.rsplit("/", 1)[-1],
+                "Path": remote,
+                "Size": before.st_size,
+                "Sha2": digest.hexdigest(),
+                "TimeModified": datetime.fromtimestamp(before.st_mtime, timezone.utc)
+                .isoformat(timespec="microseconds")
+                .replace("+00:00", "Z"),
+            }
+            yield json.dumps(metadata, ensure_ascii=False).encode("utf-8")
+            remaining = before.st_size
+            while remaining:
+                chunk = source.read(min(chunk_size, remaining))
+                if not chunk:
+                    raise RuntimeError(f"Local file changed during upload: {local}")
+                remaining -= len(chunk)
+                yield chunk
+            after = os.fstat(source.fileno())
+            if (before.st_size, before.st_mtime_ns) != (
+                after.st_size,
+                after.st_mtime_ns,
+            ):
+                raise RuntimeError(f"Local file changed during upload: {local}")
 
 
 def relative_path(path: str) -> str:

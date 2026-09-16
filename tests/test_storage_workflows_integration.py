@@ -120,3 +120,22 @@ def test_sync_workflow(
     }
     svc.sync_remote_to_local(copy, prefix, verify_sha=True)
     assert (copy / "file.txt").read_text() == "changed"
+
+
+def test_bulk_upload_workflow(
+    remote_folder: tuple[StorageServices, str], tmp_path: Path
+) -> None:
+    svc, root = remote_folder
+    first, empty = tmp_path / "first", tmp_path / "empty"
+    first.write_bytes(b"\x00\xffabc" * 4096)
+    empty.touch()
+    svc.upload_many(
+        {f"{root}/sub/first.bin": first, f"{root}/empty": empty}, chunk_size=7
+    )
+    assert svc.download(f"{root}/sub/first.bin", verify_sha=True) == first.read_bytes()
+    # The server's single-file GET fails for zero-byte files; its batch endpoint
+    # supports them and verifies that the upload created the empty file.
+    output = tmp_path / "empty-download"
+    output.mkdir()
+    svc.download([f"{root}/empty"], output, verify_sha=True)
+    assert (output / "empty").read_bytes() == b""

@@ -58,6 +58,28 @@ Prefer `upload_file(remote_path, local_path)` when uploading a file and
 uploads instead of reporting success. Low-level upload methods continue to
 return a response; call `raise_for_status()` when using them directly.
 
+## Upload multiple files in one request
+
+```python
+from pathlib import Path
+
+svc.upload_many({
+    "inputs/table.csv": Path("./table.csv"),
+    "inputs/image.tif": Path("./image.tif"),
+})
+```
+
+`upload_many()` accepts remote paths mapped to local filenames. It hashes and
+streams one file at a time, with a configurable `chunk_size` (default 1 MiB),
+without loading the entire upload into memory. Paths are validated before the
+request. An empty mapping or a nonpositive chunk size raises `ValueError`.
+
+The server's `fileComparison` policy controls replacement; `file_comparison`
+defaults to `"TimeModified"`. A successful request does not imply every existing
+file was replaced. Source modification during transfer raises an error when
+detected. This operation is not transactional: earlier files may already exist
+on the server after a failure. No automatic retries are performed.
+
 ## Download a file
 
 ```python

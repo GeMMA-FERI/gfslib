@@ -15,12 +15,22 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple, Any, Literal, Sequence
+from typing import (
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Tuple,
+    Any,
+    Literal,
+    Sequence,
+    Mapping,
+)
 from urllib.parse import quote
 
 import requests
 
-from ._stream import destination, extract, relative_path, write_file
+from ._stream import destination, encode_files, extract, relative_path, write_file
 from ._sync import SyncEntry, selected
 
 
@@ -203,6 +213,48 @@ class StorageServices:
     def upload_text(self, remote_path: str, text: str) -> requests.Response:
         """Upload UTF-8 text, even when the text names an existing local file."""
         return self.upload(remote_path, text.encode("utf-8"))
+
+    def upload_many(
+        self,
+        files: Mapping[str, os.PathLike[str] | str],
+        file_comparison: str = "TimeModified",
+        chunk_size: int = 1024 * 1024,
+    ) -> requests.Response:
+        """Stream remote-path -> local-file mappings in one GF upload request.
+
+        Each file is hashed and then streamed in bounded chunks. The server's
+        fileComparison policy controls replacement (default TimeModified).
+        A failed request can leave earlier files uploaded; this is not atomic
+        across files and is never retried automatically. HTTP errors raise.
+        """
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be positive")
+        if not files:
+            raise ValueError("files must not be empty")
+        prepared = []
+        seen = set()
+        for remote, local in files.items():
+            path = relative_path(remote)
+            if path in seen:
+                raise ValueError("Duplicate remote upload path")
+            seen.add(path)
+            source = Path(local)
+            if not source.is_file():
+                raise FileNotFoundError(source)
+            prepared.append((path, source))
+        body = encode_files(prepared, chunk_size)
+        try:
+            resp = requests.post(
+                f"{self.base_url}/upload",
+                headers=self._headers({"Content-Type": "application/octet-stream"}),
+                params={"fileComparison": file_comparison},
+                data=body,
+                timeout=self.timeout,
+            )
+            resp.raise_for_status()
+            return resp
+        finally:
+            body.close()
 
     def download(
         self,
