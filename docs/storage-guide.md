@@ -85,6 +85,20 @@ meta = svc.metadata(["folder/sample.txt"], ignore_sha=False)
 print(meta)
 ```
 
+## Create and remove directories
+
+```python
+svc.mkdir("empty-folder")
+svc.mkdir(["folder-one", "folder-two"])
+results = svc.rmdir("empty-folder")
+results = svc.rmdir(["folder-one", "folder-two"], recursive=True)
+```
+
+Both methods accept a string or an iterable of paths and return the server's
+per-path `path`, `status`, and `error` records. Inspect these records for partial
+failures even when the HTTP request succeeds. `rmdir()` defaults to
+`recursive=False`, so it does not remove a directory's contents.
+
 ## Rename or move
 
 ```python

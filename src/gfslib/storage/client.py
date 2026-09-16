@@ -94,6 +94,34 @@ class StorageServices:
         resp.raise_for_status()
         return resp
 
+    def mkdir(self, paths: str | Iterable[str]) -> List[Dict[str, Any]]:
+        """Create directories and return per-path status/error records."""
+        return self._directories("create", paths, {})
+
+    def rmdir(
+        self, paths: str | Iterable[str], recursive: bool = False
+    ) -> List[Dict[str, Any]]:
+        """Remove directories; only empty directories are removed by default.
+
+        Inspect returned records for individual failures, including nonempty
+        directories. HTTP failures raise requests.HTTPError.
+        """
+        return self._directories("remove", paths, {"recursive": str(recursive).lower()})
+
+    def _directories(
+        self, operation: str, paths: str | Iterable[str], params: Dict[str, str]
+    ) -> List[Dict[str, Any]]:
+        resp = requests.post(
+            f"{self.base_url}/directories/{operation}",
+            headers=self._headers(),
+            json=[paths] if isinstance(paths, str) else list(paths),
+            params=params,
+            timeout=self.timeout,
+        )
+        resp.raise_for_status()
+        results: List[Dict[str, Any]] = resp.json()
+        return results
+
     def ls(
         self,
         path: Optional[str] = None,
