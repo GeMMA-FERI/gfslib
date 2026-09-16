@@ -51,6 +51,32 @@ class StorageServices:
         rp = remote_path.lstrip("/")
         return f"{self.base_url}/files/{quote(rp, safe='/') }"
 
+    def path_info(self, path: str) -> Dict[str, Any]:
+        """Return whether a path exists and its server-provided entry details."""
+        resp = requests.get(
+            f"{self.base_url}/path/info",
+            headers=self._headers(),
+            params={"path": path},
+            timeout=self.timeout,
+        )
+        resp.raise_for_status()
+        result: Dict[str, Any] = resp.json()
+        return result
+
+    def exists(self, path: str) -> bool:
+        """Return whether a remote file or directory exists."""
+        return bool(self.path_info(path)["exists"])
+
+    def is_file(self, path: str) -> bool:
+        """Return whether a remote path exists and is a file."""
+        info = self.path_info(path)
+        return bool(info["exists"] and info["entry"]["type"] == 0)
+
+    def is_dir(self, path: str) -> bool:
+        """Return whether a remote path exists and is a directory."""
+        info = self.path_info(path)
+        return bool(info["exists"] and info["entry"]["type"] == 1)
+
     def ls(
         self,
         path: Optional[str] = None,

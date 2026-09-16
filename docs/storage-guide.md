@@ -30,6 +30,19 @@ tree = svc.ls_long(path="sync-tests", recursive=True, include_directories=True)
 - `recursive`: include nested files and folders
 - `include_directories`: include directory entries in the response when supported by the server
 
+## Inspect a remote path
+
+```python
+svc.exists("folder/sample.txt")
+svc.is_file("folder/sample.txt")
+svc.is_dir("folder")
+info = svc.path_info("folder/sample.txt")
+```
+
+Missing paths return `False` from the boolean helpers. Authentication and server
+errors raise exceptions. `path_info()` returns the server's `exists` flag and,
+when present, the `entry` containing path, type, size, and modification time.
+
 ## Upload a file
 
 ```python
