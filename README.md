@@ -1,7 +1,7 @@
 # GeMMA Fusion Suite Python Library (GFSLib)
 
 GFSLib is a Python library that provides utilities for working with the GeMMA Fusion Suite Server.
-It is currently in alpha development and only includes storage utilities for communicating with the GF Server.
+It is currently in alpha development and includes storage workflows and workspace/dataset discovery for the GF Server.
 
 ## Getting Started
 

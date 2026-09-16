@@ -34,5 +34,7 @@ nav:
   - Home: index.md
   - Getting Started: getting-started.md
   - Storage Guide: storage-guide.md
+  - Discovery Guide: discovery-guide.md
   - API:
+      - GFClient: api/client.md
       - StorageServices: api/storage.md

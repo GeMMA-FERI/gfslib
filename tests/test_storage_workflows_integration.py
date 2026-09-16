@@ -3,11 +3,39 @@ from pathlib import Path
 from typing import Iterator
 
 import pytest
+import requests
 
 from gfslib.storage import StorageServices
+from gfslib import GFClient
 from test_storage_integration import _skip_unless_env
 
 pytestmark = pytest.mark.integration
+
+
+def test_workspace_discovery() -> None:
+    url, key = _skip_unless_env()
+    base, service = url.rsplit("/api/ws/", 1)
+    workspace_id = service.split("/", 1)[0]
+    server = GFClient(base)
+    server.set_api_key(key)
+    assert isinstance(server.workspaces(), list)
+    assert server.workspace(workspace_id)["uuid"] == workspace_id
+    assert server.storage(workspace_id).base_url == url.rstrip("/")
+
+
+@pytest.mark.parametrize("method", ["datasets", "datasources"])
+def test_workspace_catalog(method: str) -> None:
+    url, key = _skip_unless_env()
+    base, service = url.rsplit("/api/ws/", 1)
+    server = GFClient(base)
+    server.set_api_key(key)
+    try:
+        result = getattr(server, method)(service.split("/", 1)[0])
+    except requests.HTTPError as exc:
+        if exc.response is not None and exc.response.status_code == 500:
+            pytest.xfail(f"GF test server returns HTTP 500 for {method}")
+        raise
+    assert isinstance(result, list)
 
 
 @pytest.fixture
