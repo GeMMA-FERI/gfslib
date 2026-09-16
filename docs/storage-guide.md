@@ -36,6 +36,15 @@ tree = svc.ls_long(path="sync-tests", recursive=True, include_directories=True)
 svc.upload("folder/sample.txt", "path/to/local/sample.txt")
 ```
 
+Prefer `upload_file(remote_path, local_path)` when uploading a file and
+`upload_text(remote_path, text)` when uploading text. `upload_file` accepts
+`pathlib.Path` and raises `FileNotFoundError` for missing files. The existing
+`upload` method still treats strings that are not existing paths as text.
+
+`metadata()` raises on HTTP errors and invalid JSON. Sync raises on failed
+uploads instead of reporting success. Low-level upload methods continue to
+return a response; call `raise_for_status()` when using them directly.
+
 ## Download a file
 
 ```python

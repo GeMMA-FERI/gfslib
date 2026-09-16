@@ -3,6 +3,7 @@ import tempfile
 import pytest
 import hashlib
 import uuid
+import requests
 
 from gfslib.storage.client import StorageServices
 from pathlib import Path
@@ -74,10 +75,8 @@ def test_integration_ls_and_metadata() -> None:
     assert r.status_code == 200
 
     # metadata should accept a small list
-    meta = svc.metadata(["nonexistent.file"], ignore_sha=True)
-
-    assert isinstance(meta, dict)
-    assert meta["status"] == 500 or meta == {}
+    with pytest.raises(requests.HTTPError):
+        svc.metadata([f"missing-{uuid.uuid4().hex}.file"], ignore_sha=True)
 
 
 @pytest.mark.integration

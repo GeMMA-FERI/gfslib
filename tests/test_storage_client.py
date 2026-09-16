@@ -279,7 +279,7 @@ def test_deserialize_stream_handles_metadata_and_payload_across_reads(
     assert (tmp_path / "later-chunk.txt").read_bytes() == b"abc"
 
 
-def test_metadata_returns_empty_dict_for_non_json_response(
+def test_metadata_rejects_non_json_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -289,7 +289,8 @@ def test_metadata_returns_empty_dict_for_non_json_response(
     )
 
     svc = StorageServices("https://example.test/storage")
-    assert svc.metadata(["missing.txt"]) == {}
+    with pytest.raises(ValueError, match="not json"):
+        svc.metadata(["missing.txt"])
 
 
 def test_sync_local_to_remote_handles_empty_dir_and_dry_run_without_prefix(
@@ -316,9 +317,12 @@ def test_sync_local_to_remote_handles_missing_metadata_response(
     svc = StorageServices("https://example.test/storage")
     monkeypatch.setattr(svc, "metadata", lambda *args, **kwargs: None)
     uploads: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        svc, "upload", lambda remote, path: uploads.append((remote, path))
-    )
+
+    def upload(remote: str, path: str) -> DummyResponse:
+        uploads.append((remote, path))
+        return DummyResponse()
+
+    monkeypatch.setattr(svc, "upload_file", upload)
 
     assert svc.sync_local_to_remote(tmp_path) == {"plain.txt": "uploaded"}
     assert uploads == [("plain.txt", str(local))]

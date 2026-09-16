@@ -101,10 +101,10 @@ class StorageServices:
             resp = requests.put(url, headers=headers, data=body, timeout=self.timeout)
             return resp
 
-        if isinstance(data, str) and os.path.exists(data):
-            # treat as file path
-            with open(data, "rb") as fh:
-                return requests.put(url, headers=headers, data=fh, timeout=self.timeout)
+        if isinstance(data, os.PathLike) or (
+            isinstance(data, str) and os.path.exists(data)
+        ):
+            return self.upload_file(remote_path, data)
 
         # otherwise treat as string content
         if isinstance(data, str):
@@ -112,6 +112,22 @@ class StorageServices:
             return requests.put(url, headers=headers, data=body, timeout=self.timeout)
 
         raise TypeError("data must be bytes, string, or path to file")
+
+    def upload_file(
+        self, remote_path: str, local_path: os.PathLike[str] | str
+    ) -> requests.Response:
+        """Stream a local file. Missing files raise FileNotFoundError."""
+        with open(local_path, "rb") as fh:
+            return requests.put(
+                self._file_url(remote_path),
+                headers=self._headers({"Content-Type": "application/octet-stream"}),
+                data=fh,
+                timeout=self.timeout,
+            )
+
+    def upload_text(self, remote_path: str, text: str) -> requests.Response:
+        """Upload UTF-8 text, even when the text names an existing local file."""
+        return self.upload(remote_path, text.encode("utf-8"))
 
     def download(
         self,
@@ -349,11 +365,8 @@ class StorageServices:
         resp = requests.post(
             url, headers=headers, data=body.encode("utf-8"), timeout=self.timeout
         )
-        # return parsed JSON (list/dict) for easier consumption by callers
-        try:
-            return resp.json()
-        except ValueError:
-            return {}
+        resp.raise_for_status()
+        return resp.json()
 
     @staticmethod
     def compute_sha256(path: os.PathLike[str] | str) -> str:
@@ -409,7 +422,7 @@ class StorageServices:
 
         if isinstance(remote_meta, list):
             for item in remote_meta:
-                p = item.get("Path")
+                p = item.get("Path", item.get("path"))
                 if isinstance(p, str):
                     remote_map[_norm(p)] = item
 
@@ -431,12 +444,12 @@ class StorageServices:
                 remote_sha = remote_item.get("Sha2") or remote_item.get("sha2")
                 if remote_sha:
                     local_sha = self.compute_sha256(local_path)
-                    if local_sha == remote_sha:
+                    if local_sha.lower() == remote_sha.lower():
                         action = "skipped"
 
             if action == "uploaded":
                 if not dry_run:
-                    self.upload(rel, local_path)
+                    self.upload_file(rel, local_path).raise_for_status()
                 result[local_rel] = "uploaded (dry-run)" if dry_run else "uploaded"
             else:
                 result[local_rel] = "skipped"
