@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Add parameter to ignore missing files when batch downloading.
+- Remote path inspection, renaming, and directory creation/removal.
+- Directory downloads, optional path preservation, and SHA-256 verification.
+- Remote-to-local sync, include/exclude patterns, and structured sync plans.
+- Workspace, dataset, and datasource discovery through `GFClient`.
+- Streaming multifile uploads and explicit `upload_file`/`upload_text` helpers.
+
+### Fixed
+- `Path` uploads and error propagation for metadata and sync failures.
+- Batch filename collisions, quoted metadata parsing, and partial download writes.
+
+### Improved
+- Enforce 100% statement and branch coverage in the offline unit suite.
+
+### Compatibility
+- `metadata()` now raises on HTTP failures and malformed JSON.
+- Batch downloads still flatten paths by default, but reject duplicate names.
+- Missing local sync directories now raise instead of appearing empty.
 
 ## Release 0.3.1 - 2026-07-06
 

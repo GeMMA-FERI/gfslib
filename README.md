@@ -58,10 +58,14 @@ to ensure that everything is according to the guidelines:
 ```sh
 mypy . --strict
 black .
-pytest --cov=src .
+pytest tests -m "not integration" --cov=gfslib --cov-branch --cov-fail-under=100
 ```
 
 Guidelines are now checked using GitHub Workflows.
+The offline unit suite must reach 100% statement and branch coverage of `gfslib`.
+Live integration tests run separately with `pytest tests -m integration` and
+require `GFSLIB_STORAGE_URL` and `GFSLIB_API_KEY` (also loaded from `.env`).
+They create and delete test files on the configured server; use a test workspace.
 When developing the library locally, you can install [act](https://nektosact.com/) to run
 the GitHub workflows on your machine through Docker.
 We also recommend installing the VSCode extension

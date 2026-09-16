@@ -12,4 +12,5 @@ This documentation contains:
 
 - [Getting Started](getting-started.md)
 - [Storage Guide](storage-guide.md)
+- [Workspace and Dataset Discovery](discovery-guide.md)
 - [API Reference](api/storage.md)
