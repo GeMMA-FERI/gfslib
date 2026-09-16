@@ -85,6 +85,16 @@ meta = svc.metadata(["folder/sample.txt"], ignore_sha=False)
 print(meta)
 ```
 
+## Rename or move
+
+```python
+svc.rename("uploads/old.txt", "archive/new.txt")
+svc.rename("uploads/latest.txt", "archive/latest.txt", overwrite=True)
+```
+
+Renaming happens on the server. The default is `overwrite=False`; HTTP failures
+raise exceptions. The returned value is the server response.
+
 ## Delete a single/multiple files/folders
 
 ```python

@@ -77,6 +77,23 @@ class StorageServices:
         info = self.path_info(path)
         return bool(info["exists"] and info["entry"]["type"] == 1)
 
+    def rename(
+        self, source: str, destination: str, overwrite: bool = False
+    ) -> requests.Response:
+        """Rename or move a remote path. Overwriting must be explicitly enabled."""
+        resp = requests.post(
+            f"{self.base_url}/rename",
+            headers=self._headers(),
+            json={
+                "sourcePath": source,
+                "destinationPath": destination,
+                "overwrite": overwrite,
+            },
+            timeout=self.timeout,
+        )
+        resp.raise_for_status()
+        return resp
+
     def ls(
         self,
         path: Optional[str] = None,
