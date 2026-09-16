@@ -76,7 +76,26 @@ svc.download(paths, dest="./downloads")
 
 # skip paths that do not exist instead of failing the whole batch
 svc.download(paths, dest="./downloads", ignore_missing=True)
+
+# Preserve workspace-relative paths and verify SHA-256 before publishing files
+svc.download(paths, dest="./downloads", preserve_paths=True,
+             verify_sha=True, overwrite=False)
+
+# Download folder contents, relative to the selected remote directory
+svc.download_directory("folder", "./folder-copy", verify_sha=True)
 ```
+
+Batch downloads retain their existing flat layout by default, but reject
+duplicate destination names. `download_directory()` preserves the tree and
+creates its destination folder. It defaults to `overwrite=False`; existing
+files raise `FileExistsError`. Single/batch downloads retain `overwrite=True`.
+Empty remote directories are not represented by the server's download stream.
+
+Files are written to temporary siblings and published only after a complete
+transfer and successful checksum verification when requested. A failed file
+leaves an existing destination unchanged. Earlier completed files remain if a
+later file in a batch fails. `verify_sha=True` requires server hash metadata and
+cannot be combined with `ignore_sha=True` or partial (`byte_range`) downloads.
 
 ## Metadata
 

@@ -29,6 +29,9 @@ class DummyResponse:
     def raise_for_status(self) -> None:
         return None
 
+    def close(self) -> None:
+        self.raw.close()
+
     def iter_content(self, chunk_size: int) -> list[bytes]:
         return [self.content[:1], b"", self.content[1:]]
 

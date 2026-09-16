@@ -14,10 +14,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple, Any
 from urllib.parse import quote
 
 import requests
+
+from ._stream import extract, write_file
 
 
 class StorageServices:
@@ -209,6 +212,9 @@ class StorageServices:
         write_chunk_size: int = 10 * 1024 * 1024,
         validate_paths: bool = True,
         ignore_missing: bool = False,
+        preserve_paths: bool = False,
+        overwrite: bool = True,
+        verify_sha: bool = False,
     ) -> bytes | List[Dict[str, Any]]:
         """Download a file or multiple files.
 
@@ -220,7 +226,17 @@ class StorageServices:
         <METADATA_JSON><FILE><METADATA_JSON><FILE> and the files are written
         into `dest`. Set `ignore_missing` to skip requested files that do not
         exist instead of failing the entire multi-file download.
+
+        Batch downloads flatten paths by default for compatibility. Set
+        preserve_paths=True to retain workspace-relative paths. Colliding names
+        in a batch raise ValueError. overwrite=False protects existing files.
+        verify_sha=True checks server SHA-256 metadata; it cannot be combined
+        with ignore_sha or a byte range. Files are staged until complete.
         """
+        if write_chunk_size <= 0:
+            raise ValueError("write_chunk_size must be positive")
+        if verify_sha and (ignore_sha or byte_range is not None):
+            raise ValueError("Checksum verification requires complete files and hashes")
         if isinstance(remote_path, list):
             if dest is None:
                 raise ValueError(
@@ -233,6 +249,9 @@ class StorageServices:
                 ignore_missing=ignore_missing,
                 write_chunk_size=write_chunk_size,
                 validate_paths=validate_paths,
+                preserve_paths=preserve_paths,
+                overwrite=overwrite,
+                verify_sha=verify_sha,
             )
 
         url = self._file_url(remote_path)
@@ -244,20 +263,34 @@ class StorageServices:
             else:
                 headers["Range"] = f"bytes={start}-{end}"
 
+        sha = None
+        if verify_sha:
+            meta = self.metadata([remote_path])
+            if not isinstance(meta, list) or len(meta) != 1:
+                raise ValueError("Expected metadata for one file")
+            sha = meta[0].get("Sha2", meta[0].get("sha2"))
+            if not isinstance(sha, str):
+                raise ValueError("SHA-256 is missing from metadata")
         resp = requests.get(url, headers=headers, stream=True, timeout=self.timeout)
-        resp.raise_for_status()
-
-        if dest is not None:
-            dest_path = str(dest)
-            os.makedirs(os.path.dirname(dest_path) or ".", exist_ok=True)
-            with open(dest_path, "wb") as fh:
-                for chunk in resp.iter_content(chunk_size=8192):
-                    if chunk:
-                        fh.write(chunk)
-            return b""
-
-        # collect into bytes
-        return resp.content
+        try:
+            resp.raise_for_status()
+            if dest is not None:
+                write_file(
+                    Path(dest),
+                    resp.iter_content(chunk_size=write_chunk_size),
+                    overwrite,
+                    sha,
+                )
+                return b""
+            content = resp.content
+            if (
+                sha is not None
+                and hashlib.sha256(content).hexdigest().lower() != sha.lower()
+            ):
+                raise ValueError("SHA-256 mismatch")
+            return content
+        finally:
+            resp.close()
 
     def _download_many(
         self,
@@ -267,6 +300,10 @@ class StorageServices:
         ignore_missing: bool,
         write_chunk_size: int,
         validate_paths: bool,
+        preserve_paths: bool,
+        overwrite: bool,
+        verify_sha: bool,
+        remote_prefix: str = "",
     ) -> List[Dict[str, Any]]:
         url = f"{self.base_url}/download"
         query_params = []
@@ -292,14 +329,80 @@ class StorageServices:
             stream=True,
             timeout=self.timeout,
         )
-        resp.raise_for_status()
-        resp.raw.decode_content = True
-        return self._deserialize_stream_to_files(
-            resp.raw,
-            dest_dir=dest_dir,
-            write_chunk_size=write_chunk_size,
-            validate_paths=validate_paths,
+        try:
+            resp.raise_for_status()
+            resp.raw.decode_content = True
+            return self._deserialize_stream_to_files(
+                resp.raw,
+                dest_dir=dest_dir,
+                write_chunk_size=write_chunk_size,
+                validate_paths=validate_paths,
+                preserve_paths=preserve_paths,
+                overwrite=overwrite,
+                verify_sha=verify_sha,
+                remote_prefix=remote_prefix,
+            )
+        finally:
+            resp.close()
+
+    def download_directory(
+        self,
+        remote_path: str,
+        dest: os.PathLike[str] | str,
+        overwrite: bool = False,
+        verify_sha: bool = False,
+        write_chunk_size: int = 10 * 1024 * 1024,
+    ) -> List[Dict[str, Any]]:
+        """Download directory contents, preserving paths relative to remote_path.
+
+        Existing files are rejected unless overwrite=True. Completed files remain
+        if a later file fails; each individual file is published atomically.
+        Empty directories are not represented in the GF multifile stream.
+        """
+        if write_chunk_size <= 0:
+            raise ValueError("write_chunk_size must be positive")
+        Path(dest).mkdir(parents=True, exist_ok=True)
+        if verify_sha:
+            # GET /download omits hashes. POST /download includes them.
+            listing = self.ls(path=remote_path, recursive=True)
+            listing.raise_for_status()
+            paths = listing.json()
+            if not paths:
+                return []
+            return self._download_many(
+                paths,
+                dest,
+                False,
+                False,
+                write_chunk_size,
+                True,
+                True,
+                overwrite,
+                True,
+                remote_prefix=remote_path,
+            )
+        resp = requests.get(
+            f"{self.base_url}/download",
+            headers=self._headers(),
+            params={"path": remote_path, "includeWorkspaceDatabase": "false"},
+            stream=True,
+            timeout=self.timeout,
         )
+        try:
+            resp.raise_for_status()
+            resp.raw.decode_content = True
+            return self._deserialize_stream_to_files(
+                resp.raw,
+                dest,
+                write_chunk_size,
+                True,
+                preserve_paths=True,
+                overwrite=overwrite,
+                verify_sha=verify_sha,
+                remote_prefix=remote_path,
+            )
+        finally:
+            resp.close()
 
     def _deserialize_stream_to_files(
         self,
@@ -307,109 +410,21 @@ class StorageServices:
         dest_dir: os.PathLike[str] | str,
         write_chunk_size: int,
         validate_paths: bool,
+        preserve_paths: bool = False,
+        overwrite: bool = True,
+        verify_sha: bool = False,
+        remote_prefix: str = "",
     ) -> List[Dict[str, Any]]:
-        out_dir = os.fspath(dest_dir)
-        if not os.path.isdir(out_dir):
-            raise ValueError("Output folder does not exist")
-
-        meta_size = 1024 * 1024
-        buffer_size = meta_size * 10
-        results: List[Dict[str, Any]] = []
-
-        def read_more(size: int) -> bytes:
-            return stream.read(size) or b""
-
-        workbuffer = bytearray(read_more(buffer_size))
-        meta_start = 0
-
-        def parse_json_object() -> Tuple[Dict[str, Any], int]:
-            nonlocal workbuffer, meta_start
-            start_count = 0
-            end_count = 0
-            meta_end = meta_start
-            i = meta_start
-
-            while True:
-                if meta_end - meta_start > meta_size:
-                    raise RuntimeError("Metadata too large: closing brace not found")
-                if i >= len(workbuffer):
-                    more = read_more(buffer_size)
-                    if not more:
-                        raise RuntimeError("Metadata start not found")
-                    workbuffer.extend(more)
-                sym = workbuffer[i]
-                meta_end += 1
-                if sym == ord("{"):
-                    start_count += 1
-                if sym == ord("}"):
-                    end_count += 1
-                if start_count == 0:
-                    raise RuntimeError("Metadata start not found")
-                if start_count == end_count:
-                    break
-                i += 1
-
-            meta_bytes = bytes(workbuffer[meta_start:meta_end])
-            meta = json.loads(meta_bytes)
-            return meta, meta_end
-
-        def validate_path(path: str) -> None:
-            if not validate_paths:
-                return
-            if "../" in path or "..\\" in path or ":" in path:
-                raise RuntimeError("File path contains illegal characters")
-
-        while True:
-            if meta_start >= len(workbuffer):
-                workbuffer = bytearray(read_more(buffer_size))
-                meta_start = 0
-                if not workbuffer:
-                    break
-
-            meta, meta_end = parse_json_object()
-            path = str(meta.get("Path", ""))
-            validate_path(path)
-            size = int(meta.get("Size", 0))
-
-            rel_path = os.path.basename(path.lstrip("/").replace("\\", "/"))
-            out_path = os.path.join(out_dir, rel_path)
-            os.makedirs(os.path.dirname(out_path) or out_dir, exist_ok=True)
-
-            file_written = 0
-            data_start = meta_end
-            available = max(0, len(workbuffer) - data_start)
-            first_chunk = min(available, size)
-            if first_chunk:
-                with open(out_path, "wb") as fh:
-                    fh.write(workbuffer[data_start : data_start + first_chunk])
-                    file_written += first_chunk
-                    while file_written < size:
-                        chunk = read_more(min(write_chunk_size, size - file_written))
-                        if not chunk:
-                            raise RuntimeError(
-                                "Unexpected EOF while reading file payload"
-                            )
-                        fh.write(chunk)
-                        file_written += len(chunk)
-            else:
-                with open(out_path, "wb") as fh:
-                    while file_written < size:
-                        chunk = read_more(min(write_chunk_size, size - file_written))
-                        if not chunk:
-                            raise RuntimeError(
-                                "Unexpected EOF while reading file payload"
-                            )
-                        fh.write(chunk)
-                        file_written += len(chunk)
-
-            results.append({"metadata": meta, "path": out_path})
-
-            meta_start = data_start + file_written
-            if meta_start > 0 and meta_start < len(workbuffer):
-                workbuffer = workbuffer[meta_start:]
-                meta_start = 0
-
-        return results
+        return extract(
+            stream,
+            dest_dir,
+            write_chunk_size,
+            validate_paths,
+            preserve_paths,
+            overwrite,
+            verify_sha,
+            remote_prefix,
+        )
 
     def delete(self, remote_path: str | List[str]) -> requests.Response:
         """Remove one or more remote files or directories recursively."""
