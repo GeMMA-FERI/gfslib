@@ -4,7 +4,7 @@ Provides methods for listing, uploading, downloading, deleting,
 fetching metadata and syncing local files with the remote storage service.
 
 Usage:
-    client = StorageServices("https://fusion.gemma.feri.um.si/gf-test/api/ws/<workspace-id>/services/storage")
+    client = StorageServices("...")
     client.set_api_key("...")
     client.ls()
 """

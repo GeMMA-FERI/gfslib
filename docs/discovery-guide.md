@@ -5,7 +5,7 @@ Use the server root URL, including its deployment prefix but excluding `/api`:
 ```python
 from gfslib import GFClient
 
-server = GFClient("https://fusion.gemma.feri.um.si/gf-test")
+server = GFClient("URL")
 server.set_api_key("your_api_key")
 
 for workspace in server.workspaces():

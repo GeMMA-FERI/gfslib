@@ -11,7 +11,7 @@ from .storage import StorageServices
 
 
 class GFClient:
-    """Connect using a server root URL, e.g. https://host/gf-test.
+    """Connect using a server root URL, e.g. https://host/.
 
     Returned discovery records retain the server's JSON fields, including
     dataset attributes and datasource details. HTTP and decoding errors raise.
