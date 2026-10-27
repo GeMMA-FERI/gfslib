@@ -60,6 +60,7 @@ jobs:
           poetry run pytest tests -m "not integration" --cov=gfslib --cov-branch --cov-fail-under=100
 
       - name: Run integration tests
+        if: github.event_name == 'push'
         env:
           GFSLIB_STORAGE_URL: ${{ secrets.GFSLIB_STORAGE_URL }}
           GFSLIB_API_KEY: ${{ secrets.GFSLIB_API_KEY }}
