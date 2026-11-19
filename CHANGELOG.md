@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) but modified for easier processing,
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Release 0.5.0 - 2026-11-19
+
+### Added
+- Optional keyword-only caller-owned requests Session for every StorageServices HTTP operation.
+- Reuse caller transport settings, adapters, TLS trust and custom redirect policies without global monkeypatching.
+
+### Compatibility
+- Existing constructors and module-level requests behavior remain unchanged when no session is supplied.
+- Injected sessions remain caller-owned: StorageServices does not close them or change their configuration.
+- This API supplies no automatic redirect restriction or security policy; callers explicitly configure the session they provide.
+
 ## Release 0.4.0 - 2026-09-17
 
 ### Added

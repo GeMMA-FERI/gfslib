@@ -39,12 +39,23 @@ class StorageServices:
 
     Initialize with the base storage service URL. Examples of base URL:
     - https://.../api/ws/<workspace-id>/services/storage
+
+    An optional keyword-only requests Session controls storage HTTP transport.
+    The caller owns its configuration and lifecycle; this client never closes it.
     """
 
-    def __init__(self, base_url: str, timeout: Optional[float] = 30.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        timeout: Optional[float] = 30.0,
+        *,
+        session: Optional[requests.Session] = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self._api_key: Optional[str] = None
         self.timeout = timeout
+        # Supplied sessions remain caller-owned; default requests behavior is unchanged.
+        self._transport = requests if session is None else session
 
     def set_api_key(self, key: str) -> None:
         """Set the X-API-Key to use for requests."""
@@ -67,7 +78,7 @@ class StorageServices:
 
     def path_info(self, path: str) -> Dict[str, Any]:
         """Return whether a path exists and its server-provided entry details."""
-        resp = requests.get(
+        resp = self._transport.get(
             f"{self.base_url}/path/info",
             headers=self._headers(),
             params={"path": path},
@@ -95,7 +106,7 @@ class StorageServices:
         self, source: str, destination: str, overwrite: bool = False
     ) -> requests.Response:
         """Rename or move a remote path. Overwriting must be explicitly enabled."""
-        resp = requests.post(
+        resp = self._transport.post(
             f"{self.base_url}/rename",
             headers=self._headers(),
             json={
@@ -125,7 +136,7 @@ class StorageServices:
     def _directories(
         self, operation: str, paths: str | Iterable[str], params: Dict[str, str]
     ) -> List[Dict[str, Any]]:
-        resp = requests.post(
+        resp = self._transport.post(
             f"{self.base_url}/directories/{operation}",
             headers=self._headers(),
             json=[paths] if isinstance(paths, str) else list(paths),
@@ -149,7 +160,7 @@ class StorageServices:
             params["path"] = path
         params["recursive"] = str(recursive).lower()
         params["includeDirectories"] = str(include_directories).lower()
-        return requests.get(
+        return self._transport.get(
             url, headers=self._headers(), params=params, timeout=self.timeout
         )
 
@@ -166,7 +177,7 @@ class StorageServices:
             params["path"] = path
         params["recursive"] = str(recursive).lower()
         params["includeDirectories"] = str(include_directories).lower()
-        return requests.get(
+        return self._transport.get(
             url, headers=self._headers(), params=params, timeout=self.timeout
         )
 
@@ -183,7 +194,9 @@ class StorageServices:
 
         if isinstance(data, (bytes, bytearray)):
             body = data
-            resp = requests.put(url, headers=headers, data=body, timeout=self.timeout)
+            resp = self._transport.put(
+                url, headers=headers, data=body, timeout=self.timeout
+            )
             return resp
 
         if isinstance(data, os.PathLike) or (
@@ -194,7 +207,9 @@ class StorageServices:
         # otherwise treat as string content
         if isinstance(data, str):
             body = data.encode("utf-8")
-            return requests.put(url, headers=headers, data=body, timeout=self.timeout)
+            return self._transport.put(
+                url, headers=headers, data=body, timeout=self.timeout
+            )
 
         raise TypeError("data must be bytes, string, or path to file")
 
@@ -203,7 +218,7 @@ class StorageServices:
     ) -> requests.Response:
         """Stream a local file. Missing files raise FileNotFoundError."""
         with open(local_path, "rb") as fh:
-            return requests.put(
+            return self._transport.put(
                 self._file_url(remote_path),
                 headers=self._headers({"Content-Type": "application/octet-stream"}),
                 data=fh,
@@ -244,7 +259,7 @@ class StorageServices:
             prepared.append((path, source))
         body = encode_files(prepared, chunk_size)
         try:
-            resp = requests.post(
+            resp = self._transport.post(
                 f"{self.base_url}/upload",
                 headers=self._headers({"Content-Type": "application/octet-stream"}),
                 params={"fileComparison": file_comparison},
@@ -324,7 +339,9 @@ class StorageServices:
             sha = meta[0].get("Sha2", meta[0].get("sha2"))
             if not isinstance(sha, str):
                 raise ValueError("SHA-256 is missing from metadata")
-        resp = requests.get(url, headers=headers, stream=True, timeout=self.timeout)
+        resp = self._transport.get(
+            url, headers=headers, stream=True, timeout=self.timeout
+        )
         try:
             resp.raise_for_status()
             if dest is not None:
@@ -375,7 +392,7 @@ class StorageServices:
                 "Accept-Encoding": "gzip, deflate, br",
             }
         )
-        resp = requests.post(
+        resp = self._transport.post(
             url,
             headers=headers,
             data=body.encode("utf-8"),
@@ -434,7 +451,7 @@ class StorageServices:
                 True,
                 remote_prefix=remote_path,
             )
-        resp = requests.get(
+        resp = self._transport.get(
             f"{self.base_url}/download",
             headers=self._headers(),
             params={"path": remote_path, "includeWorkspaceDatabase": "false"},
@@ -487,7 +504,7 @@ class StorageServices:
         headers = self._headers(
             {"Content-Type": "application/json", "Content-Length": str(len(body))}
         )
-        return requests.post(
+        return self._transport.post(
             url, headers=headers, data=body.encode("utf-8"), timeout=self.timeout
         )
 
@@ -501,7 +518,7 @@ class StorageServices:
         headers = self._headers(
             {"Content-Type": "application/json", "Content-Length": str(len(body))}
         )
-        resp = requests.post(
+        resp = self._transport.post(
             url, headers=headers, data=body.encode("utf-8"), timeout=self.timeout
         )
         resp.raise_for_status()

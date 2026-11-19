@@ -11,6 +11,40 @@ svc = StorageServices("https://.../services/storage")
 svc.set_api_key("your_api_key")
 ```
 
+## Supply a caller-owned HTTP session
+
+From version 0.5.0, StorageServices accepts an optional keyword-only
+`session=requests.Session(...)` argument. Every storage HTTP operation uses that
+session, including streaming uploads/downloads and the requests made by sync
+helpers. The session can supply TLS trust, adapters, proxy behavior and connection
+pooling. GFSLib still passes the client timeout and its per-request API-key header.
+
+```python
+import requests
+from gfslib.storage import StorageServices
+
+with requests.Session() as session:
+    session.trust_env = False
+    session.verify = "/private/trusted-ca.pem"
+    svc = StorageServices("https://storage.example/api/ws/WORKSPACE/services/storage",
+                          timeout=120, session=session)
+    svc.set_api_key("YOUR_PRIVATE_API_KEY")
+    svc.upload_file("backup.age", "/private/backup.age").raise_for_status()
+```
+
+The caller owns and closes the session. GFSLib does not mutate its configuration,
+copy the API key into its default headers, or close it after individual requests.
+A client constructed without `session` keeps the existing module-level requests
+behavior. Discovery through GFClient is unchanged; supply the session directly
+when constructing StorageServices.
+
+An ordinary requests Session follows redirects. If the caller needs a policy such
+as refusing redirects before a custom API-key header can be forwarded, provide a
+Session subclass that enforces `allow_redirects=False` in its `request()` method.
+Supplying a session alone does not restrict redirects or destination origins.
+Keep TLS verification enabled. No backup-specific policy or credential is built
+into GFSLib.
+
 ## List files
 
 ```python
